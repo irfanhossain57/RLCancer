@@ -1,0 +1,42 @@
+# SC-RLOT Final Project — Python Dependencies
+# Install: pip install -r requirements.txt
+# Python version: 3.10.x (required)
+
+# ── Single-cell biology ──────────────────────────────────────
+scanpy==1.10.1
+anndata==0.10.7
+scvi-tools==1.1.2
+
+# ── Deep learning ────────────────────────────────────────────
+torch==2.9.0
+torch_geometric==2.5.2
+
+# ── Reinforcement learning ───────────────────────────────────
+stable-baselines3==2.3.0
+gymnasium==0.29.1
+
+# ── Explainability ───────────────────────────────────────────
+shap==0.45.0
+
+# ── Experiment tracking ──────────────────────────────────────
+mlflow==2.12.1
+
+# ── Data science ─────────────────────────────────────────────
+pandas==2.2.1
+numpy==1.26.4
+scipy==1.13.0
+scikit-learn==1.4.2
+matplotlib==3.8.4
+seaborn==0.13.2
+
+# ── App / UI ─────────────────────────────────────────────────
+streamlit==1.35.0
+
+# ── Utilities ────────────────────────────────────────────────
+pyyaml==6.0.1
+requests==2.31.0
+h5py==3.11.0
+tables==3.9.2
+openpyxl==3.1.2
+leidenalg==0.10.2
+python-igraph==0.11.4
