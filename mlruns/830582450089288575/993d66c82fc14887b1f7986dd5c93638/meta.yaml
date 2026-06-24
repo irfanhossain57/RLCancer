@@ -1,0 +1,14 @@
+artifact_uri: /kaggle/working/mlruns/830582450089288575/993d66c82fc14887b1f7986dd5c93638/artifacts
+end_time: 1782157620483
+entry_point_name: ''
+experiment_id: '830582450089288575'
+lifecycle_stage: active
+run_id: 993d66c82fc14887b1f7986dd5c93638
+run_name: exp2_cancer_tuned_lr_cpu
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1782157620436
+status: 3
+tags: []
+user_id: root

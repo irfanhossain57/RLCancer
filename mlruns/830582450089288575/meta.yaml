@@ -1,0 +1,9 @@
+artifact_location: /kaggle/working/mlruns/830582450089288575
+creation_time: 1782156751591
+effective_trace_archival_retention: null
+experiment_id: '830582450089288575'
+last_update_time: 1782156751591
+lifecycle_stage: active
+name: sc-rlot-cancer-drug-rl
+trace_location: null
+workspace: default

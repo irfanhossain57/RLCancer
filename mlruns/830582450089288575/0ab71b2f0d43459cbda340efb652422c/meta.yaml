@@ -1,0 +1,14 @@
+artifact_uri: /kaggle/working/mlruns/830582450089288575/0ab71b2f0d43459cbda340efb652422c/artifacts
+end_time: 1782156751689
+entry_point_name: ''
+experiment_id: '830582450089288575'
+lifecycle_stage: active
+run_id: 0ab71b2f0d43459cbda340efb652422c
+run_name: exp1_cancer_baseline
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1782156751594
+status: 3
+tags: []
+user_id: root

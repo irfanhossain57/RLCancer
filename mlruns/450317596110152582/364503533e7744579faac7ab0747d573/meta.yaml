@@ -1,0 +1,16 @@
+artifact_uri: file:///E:/ML-DL certificate course/RLCancer/mlruns/450317596110152582/364503533e7744579faac7ab0747d573/artifacts
+deleted_time: 1781907304619
+end_time: 1781906528333
+entry_point_name: ''
+experiment_id: '450317596110152582'
+lifecycle_stage: deleted
+run_id: 364503533e7744579faac7ab0747d573
+run_name: experiment_1_baseline_20epochs
+run_uuid: 364503533e7744579faac7ab0747d573
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1781906495076
+status: 4
+tags: []
+user_id: irfan

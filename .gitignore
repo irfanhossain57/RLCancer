@@ -1,13 +1,8 @@
-# ============================================================
-# .gitignore — SC-RLOT Final Project
-# NEVER commit: data files, model weights, or credentials
-# ============================================================
-
-# ── Data directories (NEVER commit raw/processed data) ──────
+# ── Data directories (NEVER commit raw data) ─────────────────
 data/
 !data/.gitkeep
 
-# ── Model weights (too large for GitHub) ────────────────────
+# ── Model weights (too large for GitHub — regenerate with train.py) ──
 models/*.pt
 models/*.zip
 models/*.npy
@@ -16,9 +11,9 @@ models/*.npz
 models/scvi_vae*/
 !models/.gitkeep
 
-# ── MLflow runs (local experiment logs) ─────────────────────
-mlruns/
-mlartifacts/
+# ── MLflow: DO NOT IGNORE — reviewers must see experiment history ──
+# mlruns/      ← REMOVED: keep mlruns in the repo
+# mlartifacts/ ← REMOVED: keep artifacts too
 
 # ── Python cache ─────────────────────────────────────────────
 __pycache__/
@@ -34,7 +29,6 @@ env/
 
 # ── Jupyter / IPython ────────────────────────────────────────
 .ipynb_checkpoints/
-*.ipynb_checkpoints
 
 # ── OS files ─────────────────────────────────────────────────
 .DS_Store
@@ -47,19 +41,16 @@ desktop.ini
 *.swp
 *.swo
 
-# ── Streamlit cache ──────────────────────────────────────────
+# ── Streamlit cache (local only, not needed in repo) ─────────
 .streamlit/
 
-# ── Large artifacts (regenerate with evaluate.py) ────────────
-artifacts/*.png
-artifacts/*.csv
-!artifacts/.gitkeep
-
-# ── Docker build cache ───────────────────────────────────────
-.dockerignore
-
-# ── Credentials and secrets (NEVER commit these) ─────────────
+# ── Credentials and secrets ──────────────────────────────────
 *.env
 .env
 secrets.yaml
 kaggle.json
+
+# ── Artifacts: keep PNGs and CSVs (they are your screenshots) ──
+# artifacts/*.png ← REMOVED
+# artifacts/*.csv ← REMOVED
+!artifacts/.gitkeep

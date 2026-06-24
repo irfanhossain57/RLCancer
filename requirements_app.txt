@@ -1,0 +1,43 @@
+# ============================================================
+# requirements_app.txt — SC-RLOT Docker inference image
+# Inference only — no scVI, no leidenalg, no training deps
+# Keeps image ~2 GB instead of ~5 GB
+#
+# Install in Docker:
+#   pip install --no-cache-dir -r requirements_app.txt
+# ============================================================
+
+# ── Deep learning core ───────────────────────────────────────
+torch==2.2.0
+
+# CRITICAL: torch_geometric MUST be here.
+# GATv2Classifier.__init__() does:
+#   from torch_geometric.nn import GATv2Conv
+# This runs every time the model is loaded in app.py.
+# Without this package the container crashes immediately on model load.
+torch_geometric==2.5.2
+
+# ── Single-cell data ─────────────────────────────────────────
+scanpy==1.10.1
+anndata==0.10.7
+h5py==3.11.0          # required by anndata to read .h5ad files
+
+# ── Reinforcement learning (inference only — no training) ────
+stable-baselines3==2.3.0
+gymnasium==0.29.1
+
+# ── Explainability ───────────────────────────────────────────
+shap==0.45.0
+
+# ── Data science ─────────────────────────────────────────────
+numpy==1.26.4
+pandas==2.2.1
+scipy==1.13.0
+scikit-learn==1.4.2
+matplotlib==3.8.4
+
+# ── App UI ───────────────────────────────────────────────────
+streamlit==1.35.0
+
+# ── Utilities ────────────────────────────────────────────────
+pyyaml==6.0.1         # app.py does: import yaml

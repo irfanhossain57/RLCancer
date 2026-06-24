@@ -2,11 +2,19 @@
 src/evaluate.py
 ===============
 Generates evaluation results after training:
+  - Confusion matrix for GATv2 classifier
   - SHAP gene importance plot
   - PPO vs random comparison bar chart
-  - Confusion matrix for GAT classifier
-  - Resistance proportion trajectory plot
-  - Saves all to artifacts/ for README screenshots
+  - Saves all to artifacts/
+
+CHANGES FROM ORIGINAL:
+  - load_best_experiment() looks for files WITHOUT _exp2/_exp1 suffix first
+    (matches Kaggle notebook output: gat_model.pt, cell_graph.npz, etc.)
+    then falls back to _exp1 suffix
+  - KNOWN_RESISTANCE_GENES updated for AML + new drug biology
+    (WEE1/CHEK1 removed — those were AZD1775 specific;
+     FLT3/MCL1/HDAC2/NF-κB genes added for the 5 new drugs)
+  - plot_ppo_comparison() updated metric key names (no suffix)
 
 Run:
     python src/evaluate.py
@@ -35,39 +43,84 @@ with open("configs/config.yaml") as f:
     cfg = yaml.safe_load(f)
 
 MODE   = cfg["mode"]
-DEVICE = torch.device("cpu")   # evaluate on CPU always
+DEVICE = torch.device("cpu")
 SEED   = cfg["subsample"]["random_seed"]
 os.makedirs("artifacts", exist_ok=True)
 np.random.seed(SEED)
 
-# Known ALL/leukemia resistance genes for validation
+# CHANGE: Updated known gene set for AML biology and new 5 drugs
+# Removed: WEE1, CHEK1, CHEK2, BRCA1 (those were AZD1775 / WEE1-inhibitor specific)
+# Added:   FLT3, MCL1, HDAC2, RELA (NF-κB), BCL2L11 for new drug targets
 KNOWN_RESISTANCE_GENES = {
-    "WEE1", "CDK1", "TP53", "BCL2", "MYC", "HDAC2",
-    "CDKN1A", "CDKN2A", "E2F1", "PCNA", "RAD51",
-    "CHEK1", "CHEK2", "BRCA1", "MDM2", "MCL1", "BIRC5",
+    # BCL-2 family (Venetoclax target pathway)
+    "BCL2", "MCL1", "BCL2L1", "BCL2L11", "BAX", "BAK1",
+    # FLT3 pathway (Quizartinib target)
+    "FLT3", "STAT5A", "STAT5B", "PIK3CA",
+    # HDAC pathway (Panobinostat target)
+    "HDAC1", "HDAC2", "HDAC3", "EP300",
+    # BCR-ABL / Src pathway (Imatinib + Dasatinib targets)
+    "ABL1", "SRC", "KIT", "PDGFRA",
+    # General AML resistance genes
+    "TP53", "MYC", "CDKN1A", "CDKN2A", "MDM2",
+    # NF-κB / inflammatory (AML drug resistance)
+    "RELA", "NFKB1", "IKBKB",
+    # Cell cycle / proliferation
+    "CDK4", "CDK6", "E2F1", "PCNA",
     # PBMC cell-type markers (for local pipeline test)
     "CD3D", "CD8A", "NKG7", "GNLY", "MS4A1", "CD14",
 }
 
-DRUG_NAMES = ["AZD1775", "Venetoclax", "Dexamethasone", "Cytarabine", "Imatinib"]
+DRUG_NAMES = cfg["gdsc2"]["drugs"]
 
 
+# ══════════════════════════════════════════════════════════════
+# LOAD BEST EXPERIMENT
+# ══════════════════════════════════════════════════════════════
 def load_best_experiment():
-    """Load the Experiment 2 (tuned) model — the better one."""
-    suffix = "_exp2"
-    h5ad_path = f"models/processed_adata{suffix}.h5ad"
-    graph_path = f"models/cell_graph{suffix}.npz"
-    gat_path   = f"models/gat_model{suffix}.pt"
+    """
+    CHANGE: Look for files WITHOUT suffix first (Kaggle notebook output),
+    then fall back to _exp1 suffix (local baseline run).
 
-    if not os.path.exists(h5ad_path):
-        suffix = "_exp1"
-        h5ad_path = f"models/processed_adata{suffix}.h5ad"
-        graph_path = f"models/cell_graph{suffix}.npz"
-        gat_path   = f"models/gat_model{suffix}.pt"
+    File search order:
+        models/gat_model.pt          ← Kaggle / exp2 (preferred)
+        models/gat_model_exp1.pt     ← local baseline fallback
+    """
+    candidates = [
+        # (h5ad, graph, gat, label)
+        ("models/processed_adata.h5ad",
+         "models/cell_graph.npz",
+         "models/gat_model.pt",
+         "tuned (Kaggle/exp2)"),
+        ("models/processed_adata_exp2.h5ad",
+         "models/cell_graph_exp2.npz",
+         "models/gat_model_exp2.pt",
+         "_exp2"),
+        ("models/processed_adata_exp1.h5ad",
+         "models/cell_graph_exp1.npz",
+         "models/gat_model_exp1.pt",
+         "_exp1"),
+    ]
 
-    print(f"[LOAD] Using experiment: {suffix}")
-    adata = ad.read_h5ad(h5ad_path)
-    adj   = sp.load_npz(graph_path)
+    h5ad_path = graph_path = gat_path = label = None
+    for h5ad, graph, gat, lbl in candidates:
+        if os.path.exists(h5ad) and os.path.exists(gat):
+            h5ad_path  = h5ad
+            graph_path = graph
+            gat_path   = gat
+            label      = lbl
+            break
+
+    if h5ad_path is None:
+        print("[ERROR] No trained model found. Run src/train.py first.")
+        sys.exit(1)
+
+    print(f"[LOAD] Using experiment: {label}")
+    print(f"       adata : {h5ad_path}")
+    print(f"       graph : {graph_path}")
+    print(f"       GAT   : {gat_path}")
+
+    adata      = ad.read_h5ad(h5ad_path)
+    adj        = sp.load_npz(graph_path)
     edge_index = sparse_to_edge_index(adj).to(DEVICE)
 
     model_gat = GATv2Classifier(
@@ -77,31 +130,45 @@ def load_best_experiment():
     ).to(DEVICE)
     model_gat.load_state_dict(torch.load(gat_path, map_location=DEVICE))
     model_gat.eval()
-    return adata, model_gat, edge_index, suffix
+
+    return adata, model_gat, edge_index, label
 
 
-def plot_confusion_matrix(adata, model_gat, edge_index, suffix):
+# ══════════════════════════════════════════════════════════════
+# CONFUSION MATRIX
+# ══════════════════════════════════════════════════════════════
+def plot_confusion_matrix(adata, model_gat, edge_index):
     from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
-    X = torch.tensor(adata.obsm["X_vae"], dtype=torch.float32).to(DEVICE)
+
+    X      = torch.tensor(adata.obsm["X_vae"], dtype=torch.float32).to(DEVICE)
     y_true = adata.obs["resistant"].values.astype(int)
+
     with torch.no_grad():
         logits = model_gat(X, edge_index)
         y_pred = logits.argmax(1).cpu().numpy()
 
-    cm = confusion_matrix(y_true, y_pred)
+    cm   = confusion_matrix(y_true, y_pred)
     fig, ax = plt.subplots(figsize=(5, 4))
     disp = ConfusionMatrixDisplay(cm, display_labels=["Sensitive", "Resistant"])
     disp.plot(ax=ax, cmap="Blues", colorbar=False)
     ax.set_title("GATv2 Drug Resistance Classification", fontsize=12)
     plt.tight_layout()
+
     path = "artifacts/confusion_matrix.png"
-    plt.savefig(path, dpi=150, bbox_inches="tight"); plt.close()
+    plt.savefig(path, dpi=150, bbox_inches="tight")
+    plt.close()
     print(f"  [SAVED] {path}")
     return path
 
 
-def plot_shap(adata, model_gat, edge_index, suffix):
-    """SHAP gene importance using KernelExplainer on VAE latent space."""
+# ══════════════════════════════════════════════════════════════
+# SHAP GENE IMPORTANCE
+# ══════════════════════════════════════════════════════════════
+def plot_shap(adata, model_gat, edge_index):
+    """
+    SHAP gene importance via KernelExplainer on VAE latent space.
+    Maps latent dimension importances back to genes via correlation.
+    """
     print("[SHAP] Computing gene importance...")
     X_lat = adata.obsm["X_vae"]
     n_bg  = min(30, adata.n_obs)
@@ -115,18 +182,19 @@ def plot_shap(adata, model_gat, edge_index, suffix):
 
     def predict_fn(latent_np):
         with torch.no_grad():
-            t = torch.tensor(latent_np, dtype=torch.float32).to(DEVICE)
+            t      = torch.tensor(latent_np, dtype=torch.float32).to(DEVICE)
             logits = model_gat(t, edge_index)
             return F.softmax(logits, dim=1)[:, 1].cpu().numpy()
 
-    explainer  = shap.KernelExplainer(predict_fn, bg[:10])
-    shap_vals  = explainer.shap_values(exp_X[:20], nsamples=30)
-    shap_arr   = np.array(shap_vals)
+    explainer = shap.KernelExplainer(predict_fn, bg[:10])
+    shap_vals = explainer.shap_values(exp_X[:20], nsamples=50)
+    shap_arr  = np.array(shap_vals)
 
-    # Map latent → gene importance via correlation
+    # Map latent dimensions → genes via correlation
     X_gene = (adata.layers["lognorm"].toarray()
                if sp.issparse(adata.layers["lognorm"])
                else np.array(adata.layers["lognorm"]))
+
     mean_shap = np.mean(np.abs(shap_arr), axis=0)
     gene_imp  = np.zeros(X_gene.shape[1])
     for i in range(X_lat.shape[1]):
@@ -139,7 +207,7 @@ def plot_shap(adata, model_gat, edge_index, suffix):
     }).sort_values("importance", ascending=False).reset_index(drop=True)
     gene_df.to_csv("artifacts/shap_gene_importance.csv", index=False)
 
-    # Overlap with known resistance genes
+    # Overlap with known AML resistance genes (CHANGE: updated gene set)
     top_genes = set(gene_df.head(20)["gene"].str.upper())
     known     = {g.upper() for g in KNOWN_RESISTANCE_GENES}
     overlap   = top_genes & known
@@ -149,48 +217,73 @@ def plot_shap(adata, model_gat, edge_index, suffix):
 
     # Plot
     top_df = gene_df.head(20)
-    colors = ["#e74c3c" if g.upper() in known else "#3498db" for g in top_df["gene"]]
+    colors = ["#e74c3c" if g.upper() in known else "#3498db"
+              for g in top_df["gene"]]
+
     fig, ax = plt.subplots(figsize=(9, 6))
-    ax.barh(range(len(top_df)), top_df["importance"][::-1].values, color=colors[::-1])
+    ax.barh(range(len(top_df)),
+            top_df["importance"][::-1].values,
+            color=colors[::-1])
     ax.set_yticks(range(len(top_df)))
     ax.set_yticklabels(top_df["gene"][::-1].values, fontsize=9)
     ax.set_xlabel("SHAP Importance (→ resistance)", fontsize=11)
-    ax.set_title(f"Top 20 Genes Driving Drug Resistance\n(red=known, blue=novel | {pct:.0f}% known overlap)",
-                 fontsize=11)
-    red  = mpatches.Patch(color="#e74c3c", label="Known resistance gene")
-    blue = mpatches.Patch(color="#3498db", label="Novel candidate")
-    ax.legend(handles=[red, blue]); ax.grid(axis="x", alpha=0.3)
+    ax.set_title(
+        f"Top 20 Genes Driving Drug Resistance\n"
+        f"(red=known AML resistance gene, blue=novel | {pct:.0f}% overlap)",
+        fontsize=11,
+    )
+    red_patch  = mpatches.Patch(color="#e74c3c", label="Known resistance gene")
+    blue_patch = mpatches.Patch(color="#3498db", label="Novel candidate")
+    ax.legend(handles=[red_patch, blue_patch])
+    ax.grid(axis="x", alpha=0.3)
     plt.tight_layout()
+
     path = "artifacts/shap_gene_importance.png"
-    plt.savefig(path, dpi=150, bbox_inches="tight"); plt.close()
+    plt.savefig(path, dpi=150, bbox_inches="tight")
+    plt.close()
     print(f"  [SAVED] {path}")
     return path, gene_df, pct
 
 
-def plot_ppo_comparison(suffix):
-    """Bar chart: PPO vs random baseline from saved MLflow metrics."""
+# ══════════════════════════════════════════════════════════════
+# PPO COMPARISON
+# ══════════════════════════════════════════════════════════════
+def plot_ppo_comparison():
+    """
+    CHANGE: Updated metric key lookup to match new run_suffix scheme.
+    Exp2 (tuned) uses no suffix: baseline_mean_reward, ppo_mean_reward
+    Exp1 (baseline) uses _exp1 suffix.
+    """
     try:
         client = mlflow.tracking.MlflowClient()
         exp    = client.get_experiment_by_name(cfg["mlflow"]["experiment_name"])
-        runs   = client.search_runs(exp.experiment_id,
-                                     order_by=["start_time DESC"])
+        if exp is None:
+            print("  [SKIP] MLflow experiment not found")
+            return None
+        runs = client.search_runs(exp.experiment_id, order_by=["start_time DESC"])
 
-        # Pull metrics from the two runs
         results = []
-        for run in runs[:2]:
-            m = run.data.metrics
+        for run in runs:
+            m     = run.data.metrics
             rname = run.info.run_name or run.info.run_id[:8]
-            for sfx in ["_exp1", "_exp2"]:
+            # CHANGE: check both suffixed and un-suffixed metric keys
+            for sfx in ["", "_exp1", "_exp2"]:
                 br = m.get(f"baseline_mean_reward{sfx}")
                 pr = m.get(f"ppo_mean_reward{sfx}")
                 if br is not None and pr is not None:
-                    results.append({"run": rname + sfx, "baseline": br, "ppo": pr})
+                    results.append({
+                        "run":      rname + (sfx if sfx else " (tuned)"),
+                        "baseline": br,
+                        "ppo":      pr,
+                    })
+                    break
 
         if not results:
-            print("  [SKIP] No PPO metrics found yet — run train.py first")
+            print("  [SKIP] No PPO metrics in MLflow yet — run train.py first")
             return None
 
-        fig, axes = plt.subplots(1, len(results), figsize=(6 * len(results), 5), squeeze=False)
+        fig, axes = plt.subplots(1, len(results),
+                                  figsize=(6 * len(results), 5), squeeze=False)
         for i, r in enumerate(results):
             ax = axes[0][i]
             ax.bar(["Random", "PPO"], [r["baseline"], r["ppo"]],
@@ -198,27 +291,34 @@ def plot_ppo_comparison(suffix):
             ax.set_title(r["run"], fontsize=10)
             ax.set_ylabel("Mean Episode Reward")
             ax.grid(axis="y", alpha=0.3)
-        plt.suptitle("PPO vs Random Drug Selection", fontsize=12)
+
+        plt.suptitle("PPO vs Random Drug Selection — AML Treatment", fontsize=12)
         plt.tight_layout()
+
         path = "artifacts/ppo_comparison.png"
-        plt.savefig(path, dpi=150, bbox_inches="tight"); plt.close()
+        plt.savefig(path, dpi=150, bbox_inches="tight")
+        plt.close()
         print(f"  [SAVED] {path}")
         return path
+
     except Exception as e:
         print(f"  [WARN] Could not plot PPO comparison: {e}")
         return None
 
 
+# ══════════════════════════════════════════════════════════════
+# MAIN
+# ══════════════════════════════════════════════════════════════
 def main():
     mlflow.set_tracking_uri(cfg["mlflow"]["tracking_uri"])
     mlflow.set_experiment(cfg["mlflow"]["experiment_name"])
 
-    adata, model_gat, edge_index, suffix = load_best_experiment()
+    adata, model_gat, edge_index, label = load_best_experiment()
 
     with mlflow.start_run(run_name="evaluation"):
-        p1 = plot_confusion_matrix(adata, model_gat, edge_index, suffix)
-        p2, gene_df, pct = plot_shap(adata, model_gat, edge_index, suffix)
-        p3 = plot_ppo_comparison(suffix)
+        p1 = plot_confusion_matrix(adata, model_gat, edge_index)
+        p2, gene_df, pct = plot_shap(adata, model_gat, edge_index)
+        p3 = plot_ppo_comparison()
 
         for p in [p1, p2]:
             if p: mlflow.log_artifact(p)
@@ -228,15 +328,17 @@ def main():
     print("\n" + "=" * 50)
     print("EVALUATION COMPLETE")
     print("=" * 50)
-    print(f"  Artifacts saved in: artifacts/")
-    for f in os.listdir("artifacts"):
-        print(f"    {f}")
+    print(f"  Artifacts saved to: artifacts/")
+    for f in sorted(os.listdir("artifacts")):
+        if not f.startswith("."): print(f"    {f}")
+
     print(f"\n  Top 5 resistance genes:")
     for _, row in gene_df.head(5).iterrows():
-        k = "KNOWN" if row["gene"].upper() in {g.upper() for g in KNOWN_RESISTANCE_GENES} else "novel"
-        print(f"    [{k:5s}] {row['gene']} (score={row['importance']:.4f})")
+        tag = "KNOWN" if row["gene"].upper() in {g.upper() for g in KNOWN_RESISTANCE_GENES} else "novel"
+        print(f"    [{tag:5s}] {row['gene']}  (score={row['importance']:.4f})")
+
     print(f"\n  Known gene overlap: {pct:.1f}%")
-    print(f"\n  Next: python src/predict.py --input data/pbmc_processed.h5ad")
+    print(f"\n  Next: python src/predict.py")
 
 
 if __name__ == "__main__":
