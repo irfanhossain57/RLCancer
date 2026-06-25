@@ -26,7 +26,10 @@ COPY models/    ./models/
 COPY app/       ./app/
 COPY artifacts/ ./artifacts/
 
+COPY mlruns/    ./mlruns/ 
+
 COPY data/gdsc_merged_ic50.csv ./data/
+COPY data/pbmc3k_raw.h5ad       ./data/
 
 # Create empty dirs
 RUN mkdir -p data mlruns

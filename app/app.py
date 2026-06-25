@@ -134,6 +134,84 @@ def load_adata_safe(path: str):
             os.remove(tmp)
 
 
+# ── Self-building per-adata cell graph loader ─────────────────
+def _load_adj_for_adata(adata, fallback=None):
+    """
+    Return a cell graph for this adata — building one automatically if needed.
+
+    The graph is a KNN similarity graph over adata.obsm['X_vae'].
+    It is what GATv2 needs to propagate information between similar cells.
+
+    This function is fully automatic — no manual script needed:
+      1. Fast path  : load pre-saved models/cell_graph_{n}.npz if it exists
+      2. Fallback   : use the model-paired adj if its shape happens to match
+      3. Auto-build : if nothing matches, build the KNN graph right now,
+                      show a Streamlit spinner, save it, and return it.
+                      Next upload of the same file skips straight to step 1.
+    """
+    n = adata.n_obs
+
+    # ── 1. Fast path: look for a saved graph ─────────────────
+    for path in [f"models/cell_graph_{n}.npz",
+                 f"artifacts/cell_graph_{n}.npz"]:
+        if os.path.exists(path):
+            try:
+                loaded = sp.load_npz(path)
+                if loaded.shape[0] == n:
+                    return loaded
+            except Exception:
+                pass
+
+    # ── 2. Model-paired adj if shape matches ──────────────────
+    if fallback is not None and fallback.shape[0] == n:
+        return fallback
+
+    # ── 3. Auto-build: no matching graph found ────────────────
+    # This is the correct behaviour — the graph is derived from the data
+    # itself (X_vae KNN), so it is always valid for any uploaded file.
+    if "X_vae" not in adata.obsm:
+        return None   # nothing we can do without embeddings
+
+    adj = _build_knn_graph(adata.obsm["X_vae"], k=10)
+
+    # Save so the next upload of the same file is instant
+    save_path = f"models/cell_graph_{n}.npz"
+    try:
+        os.makedirs("models", exist_ok=True)
+        sp.save_npz(save_path, adj)
+    except Exception:
+        pass   # saving failed (permissions etc.) — still return the graph
+
+    return adj
+
+
+def _build_knn_graph(X_vae: np.ndarray, k: int = 10) -> sp.csr_matrix:
+    """
+    Build a symmetric binary KNN graph from VAE embeddings.
+    Called automatically by _load_adj_for_adata when no saved graph exists.
+    Runs in ~5-30 seconds depending on cell count.
+    """
+    from sklearn.neighbors import NearestNeighbors
+    n = len(X_vae)
+    nn_model = NearestNeighbors(n_neighbors=k + 1, metric="euclidean",
+                                algorithm="auto", n_jobs=-1)
+    nn_model.fit(X_vae)
+    _, indices = nn_model.kneighbors(X_vae)
+
+    rows, cols = [], []
+    for i in range(n):
+        for j_idx in range(1, k + 1):
+            j = int(indices[i, j_idx])
+            rows.append(i); cols.append(j)
+            rows.append(j); cols.append(i)   # symmetric
+
+    vals = np.ones(len(rows), dtype=np.float32)
+    adj  = sp.csr_matrix((vals, (rows, cols)), shape=(n, n))
+    adj.sum_duplicates()
+    adj.data[:] = 1.0   # binarise duplicated edges
+    return adj
+
+
 # ── Safe PPO loader ───────────────────────────────────────────
 def load_ppo_safe(paths):
     """Try each PPO zip path in order (exp2 first avoids numpy._core crash)."""
@@ -198,7 +276,7 @@ def load_models():
     ppo_model, _ = load_ppo_safe(ppo_order)
 
     adata_candidates = [
-        "data/processed_adata.h5ad",
+        "data/pbmc3k_raw.h5ad",
         "models/processed_adata.h5ad",
         "models/processed_adata_exp2.h5ad",
         "models/processed_adata_exp1.h5ad",
@@ -446,14 +524,30 @@ st.divider()
 # ══════════════════════════════════════════════════════════════
 st.subheader("🎯 Step 3: Drug Resistance Classification (GATv2)")
 
-# FIX: adj shape guard — must match BEFORE calling run_classification
-adj_to_use = adj
-if adj_to_use is not None and adj_to_use.shape[0] != adata.n_obs:
+# Self-building graph lookup —
+# finds or builds cell_graph_{n_cells}.npz for this specific adata.
+# First upload of a new file: ~5-30s to build. Subsequent uploads: instant.
+_n = adata.n_obs
+_has_saved = (os.path.exists(f"models/cell_graph_{_n}.npz") or
+              os.path.exists(f"artifacts/cell_graph_{_n}.npz") or
+              (adj is not None and adj.shape[0] == _n))
+
+if _has_saved:
+    adj_to_use = _load_adj_for_adata(adata, fallback=adj)
+else:
+    with st.spinner(
+        f"Building cell graph for {_n} cells from X_vae embeddings "
+        f"(one-time, ~10-30s) ..."
+    ):
+        adj_to_use = _load_adj_for_adata(adata, fallback=adj)
+    if adj_to_use is not None:
+        st.success("Cell graph built and saved — future uploads of this file will be instant.")
+
+if adj_to_use is None:
     st.info(
-        f"ℹ️ Cell graph has {adj_to_use.shape[0]} nodes but adata has {adata.n_obs} cells — "
-        "using pre-labelled resistance values instead of running GATv2."
+        "ℹ️ Could not build cell graph (X_vae embeddings missing). "
+        "Using pre-labelled resistance values instead of GATv2."
     )
-    adj_to_use = None
 
 def _show_resistance_table(probs_col):
     """Helper: show metrics + subclone table from a resist_prob column."""
